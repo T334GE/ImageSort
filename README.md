@@ -16,6 +16,8 @@ Desktop app (Python + Qt) for sorting images by category. (Requested by a friend
 - Right-click a category to rename its folder.
 - Move selected images into a selected category folder.
 
+<img width="551" height="245" alt="image" src="https://github.com/user-attachments/assets/7495333d-73e2-435d-a099-679b925ac3e2" />
+
 <img width="1915" height="1036" alt="image" src="https://github.com/user-attachments/assets/22b042fe-29b8-4b8e-8654-c276015b2c8c" />
 
 ## Dependencies
