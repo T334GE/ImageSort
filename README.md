@@ -36,9 +36,10 @@ pip install -r requirements.txt
 ## Run
 
 ```bash
+cd ./ImageSort/
 python app.py
 ```
-
+or just download one of the [releases](https://github.com/T334GE/ImageSort/releases)
 ## Test
 
 ```bash
