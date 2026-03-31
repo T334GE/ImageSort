@@ -12,3 +12,4 @@ venv/
 build/
 dist/
 logs/
+ImageSort.spec
