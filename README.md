@@ -1,6 +1,8 @@
 # ImageSort
 
-Desktop app (Python + Qt) for sorting images by category.
+Desktop app (Python + Qt) for sorting images by category. (Requested by a friend)
+
+<img width="1917" height="1026" alt="image" src="https://github.com/user-attachments/assets/6f7b849f-1ffa-434f-8d90-20463f09d1da" />
 
 ## What it does
 
@@ -14,7 +16,9 @@ Desktop app (Python + Qt) for sorting images by category.
 - Right-click a category to rename its folder.
 - Move selected images into a selected category folder.
 
-## Tech stack
+<img width="1915" height="1036" alt="image" src="https://github.com/user-attachments/assets/22b042fe-29b8-4b8e-8654-c276015b2c8c" />
+
+## Dependencies
 
 - Python 3.11+
 - PySide6 (Qt for Python)
