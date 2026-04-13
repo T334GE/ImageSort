@@ -40,6 +40,55 @@ cd ./ImageSort/
 python app.py
 ```
 or just download one of the [releases](https://github.com/T334GE/ImageSort/releases)
+
+## Build
+
+Create a virtual environment first.
+
+### Windows setup
+
+```powershell
+python -m venv .venv
+& .\.venv\Scripts\activate
+pip install -r requirements.txt
+pip install pyinstaller
+```
+
+### Debian setup
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+pip install pyinstaller
+```
+
+### Windows
+
+Run this in PowerShell from the project root:
+
+```powershell
+& .\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --windowed --onedir --name ImageSort app.py
+```
+
+Build output:
+
+- `dist\ImageSort\ImageSort.exe`
+
+### Debian
+
+Build the Linux version on a Debian-based system from the project root:
+
+```bash
+python3 -m PyInstaller --noconfirm --clean --windowed --name ImageSort app.py
+```
+
+Build output:
+
+- `dist/ImageSort/ImageSort`
+
+The Debian/Linux build must be created on Debian/Linux. PyInstaller does not cross-compile Windows builds into Linux binaries.
+
 ## Test
 
 ```bash
