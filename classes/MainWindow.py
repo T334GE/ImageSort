@@ -1,10 +1,12 @@
 """Main Qt window for the ImageSort application."""
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Iterable
 
-from PySide6.QtCore import QEvent, QPoint, QSize, Qt, QItemSelectionModel
+from PySide6.QtCore import QEvent, QPoint, QSize, Qt, QItemSelectionModel, QThread
 from PySide6.QtGui import (
+    QCloseEvent,
     QDragEnterEvent,
     QDropEvent,
     QIcon,
@@ -13,6 +15,7 @@ from PySide6.QtGui import (
     QResizeEvent,
 )
 from PySide6.QtWidgets import (
+    QApplication,
     QButtonGroup,
     QCheckBox,
     QFileDialog,
@@ -32,9 +35,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from classes.LoadingOverlay import LoadingOverlay
+from classes.TaskWorker import TaskWorker
 from functions.check_is_sort_source_path import check_is_sort_source_path
 from functions.copy_images_to_category import copy_images_to_category
 from functions.create_category_folder import create_category_folder
+from functions.get_app_logger import get_app_logger
 from functions.get_category_paths_from_destination_root import (
     get_category_paths_from_destination_root,
 )
@@ -60,8 +66,14 @@ class MainWindow(QMainWindow):
         self._category_paths: set[str] = set()
         self._preview_image_path: str = ""
         self._thumbnail_size = QSize(120, 120)
+        self._logger = get_app_logger()
+        self._task_thread: QThread | None = None
+        self._task_worker: TaskWorker | None = None
+        self._background_task_success_handler: Callable[[object], None] | None = None
+        self._background_task_failure_handler: Callable[[Exception], None] | None = None
 
         self.create_layout()
+        self.create_loading_overlay()
 
     def create_layout(self) -> None:
         """Create and wire the user interface."""
@@ -172,6 +184,16 @@ class MainWindow(QMainWindow):
         self.move_images_button.clicked.connect(self.move_selected_images_to_category)
         main_layout.addWidget(self.move_images_button)
 
+    def create_loading_overlay(self) -> None:
+        """Create the blocking loading overlay and subscribe it to log output."""
+        central_widget = self.centralWidget()
+        if central_widget is None:
+            raise RuntimeError("Main window central widget is not available.")
+
+        self.loading_overlay = LoadingOverlay(central_widget)
+        self.loading_overlay.resize(central_widget.size())
+        self._logger.add_message_listener(self.loading_overlay.message_logged.emit)
+
     def configure_images_list_as_icon_view(self) -> None:
         """Display loaded images in icon mode with thumbnail cells."""
         self.images_list.setViewMode(QListView.IconMode)
@@ -200,10 +222,24 @@ class MainWindow(QMainWindow):
 
     def set_destination_root(self, destination_root: str) -> None:
         """Set destination root and load existing categories from it."""
+        resolved_destination_root = str(Path(destination_root).resolve())
+        self.run_background_task(
+            "Loading destination categories...",
+            lambda: get_category_paths_from_destination_root(resolved_destination_root),
+            lambda category_paths: self.apply_destination_root(
+                resolved_destination_root,
+                category_paths,
+            ),
+        )
+
+    def apply_destination_root(
+        self,
+        destination_root: str,
+        category_paths: object,
+    ) -> None:
+        """Apply a loaded destination root and its categories to the UI."""
         self._destination_root = destination_root
         self.destination_input.setText(destination_root)
-
-        category_paths = get_category_paths_from_destination_root(destination_root)
         self.set_category_paths(category_paths)
 
     def set_category_paths(self, category_paths: Iterable[str]) -> None:
@@ -324,9 +360,24 @@ class MainWindow(QMainWindow):
         if not confirmed:
             return
 
-        remove_image_files(image_paths)
-        self.remove_image_items_from_listing(target_items)
+        self.run_background_task(
+            f"Deleting {len(image_paths)} image(s) from disk...",
+            lambda: remove_image_files(image_paths),
+            lambda _removed_paths: self.complete_remove_image_items_from_disk(
+                target_items,
+                image_paths,
+                path_summary,
+            ),
+        )
 
+    def complete_remove_image_items_from_disk(
+        self,
+        target_items: list[QListWidgetItem],
+        image_paths: list[str],
+        path_summary: str,
+    ) -> None:
+        """Finish a completed remove-from-disk task on the UI thread."""
+        self.remove_image_items_from_listing(target_items)
         self.show_information_message(
             f"Removed {len(image_paths)} image(s) from disk.",
             path_summary,
@@ -469,20 +520,41 @@ class MainWindow(QMainWindow):
 
         image_paths = self.get_selected_image_paths()
         category_path = str(category_item.data(Qt.UserRole))
+        category_name = category_item.text()
 
         if self.copy_image_checkbox.isChecked():
-            copy_images_to_category(image_paths, category_path)
-            self.show_information_message(
-                f"Copied {len(image_paths)} image(s) to category '{category_item.text()}'.",
-                category_path,
+            self.run_background_task(
+                f"Copying {len(image_paths)} image(s)...",
+                lambda: copy_images_to_category(image_paths, category_path),
+                lambda _copied_paths: self.show_information_message(
+                    f"Copied {len(image_paths)} image(s) to category '{category_name}'.",
+                    category_path,
+                ),
             )
             return
 
-        move_images_to_category(image_paths, category_path)
-        self.remove_image_items_from_listing(selected_items)
+        self.run_background_task(
+            f"Moving {len(image_paths)} image(s)...",
+            lambda: move_images_to_category(image_paths, category_path),
+            lambda _moved_paths: self.complete_move_selected_images_to_category(
+                list(selected_items),
+                image_paths,
+                category_name,
+                category_path,
+            ),
+        )
 
+    def complete_move_selected_images_to_category(
+        self,
+        selected_items: list[QListWidgetItem],
+        image_paths: list[str],
+        category_name: str,
+        category_path: str,
+    ) -> None:
+        """Finish a completed move-to-category task on the UI thread."""
+        self.remove_image_items_from_listing(selected_items)
         self.show_information_message(
-            f"Moved {len(image_paths)} image(s) to category '{category_item.text()}'.",
+            f"Moved {len(image_paths)} image(s) to category '{category_name}'.",
             category_path,
         )
 
@@ -558,15 +630,34 @@ class MainWindow(QMainWindow):
         if not new_source_paths:
             return
 
-        for source_path in new_source_paths:
+        self.run_background_task(
+            f"Loading images from {len(new_source_paths)} source path(s)...",
+            lambda: get_image_paths_from_source_paths(new_source_paths),
+            lambda image_paths: self.apply_loaded_source_paths(
+                new_source_paths,
+                image_paths,
+            ),
+        )
+
+    def apply_loaded_source_paths(
+        self,
+        source_paths: list[str],
+        image_paths: object,
+    ) -> None:
+        """Apply newly loaded source paths and image rows to the UI."""
+        for source_path in source_paths:
             self._source_paths.add(source_path)
 
-        image_paths = get_image_paths_from_source_paths(new_source_paths)
+        self.loading_overlay.set_status_text("Rendering thumbnails...")
+        QApplication.processEvents()
         self.set_loaded_images(image_paths)
 
     def set_loaded_images(self, image_paths: Iterable[str]) -> None:
         """Add image paths to the image list without duplicates."""
-        for image_path in image_paths:
+        normalized_image_paths = list(image_paths)
+        total_image_count = len(normalized_image_paths)
+
+        for index, image_path in enumerate(normalized_image_paths, start=1):
             if image_path in self._loaded_images:
                 continue
 
@@ -578,6 +669,87 @@ class MainWindow(QMainWindow):
 
             self.images_list.addItem(image_item)
             self._loaded_images.add(image_path)
+
+            if self.loading_overlay.isVisible() and index % 10 == 0:
+                self.loading_overlay.set_status_text(
+                    f"Rendering thumbnails... {index} of {total_image_count} image(s)"
+                )
+                QApplication.processEvents()
+
+    def run_background_task(
+        self,
+        status_text: str,
+        task: Callable[[], object],
+        on_success: Callable[[object], None],
+        on_failure: Callable[[Exception], None] | None = None,
+    ) -> None:
+        """Run task on a worker thread while showing a blocking loading overlay."""
+        if self._task_thread is not None:
+            return
+
+        self.loading_overlay.resize(self.centralWidget().size())
+        self.loading_overlay.show_loading(status_text)
+        QApplication.processEvents()
+
+        self._background_task_success_handler = on_success
+        self._background_task_failure_handler = on_failure
+        self._task_thread = QThread(self)
+        self._task_worker = TaskWorker(task)
+        self._task_worker.moveToThread(self._task_thread)
+
+        self._task_thread.started.connect(self._task_worker.run)
+        self._task_worker.completed.connect(self.handle_background_task_success)
+        self._task_worker.failed.connect(self.handle_background_task_failure)
+        self._task_worker.completed.connect(self._task_thread.quit)
+        self._task_worker.failed.connect(self._task_thread.quit)
+        self._task_worker.completed.connect(self._task_worker.deleteLater)
+        self._task_worker.failed.connect(self._task_worker.deleteLater)
+        self._task_thread.finished.connect(self._task_thread.deleteLater)
+        self._task_thread.finished.connect(self.clear_background_task_references)
+        self._task_thread.start()
+
+    def handle_background_task_success(
+        self,
+        result: object,
+    ) -> None:
+        """Apply a successful background-task result on the UI thread."""
+        self.loading_overlay.set_status_text("Updating interface...")
+        QApplication.processEvents()
+
+        try:
+            if self._background_task_success_handler is None:
+                raise RuntimeError("Background task success handler is not configured.")
+
+            self._background_task_success_handler(result)
+        except (OSError, RuntimeError, ValueError) as error:
+            self._logger.log_exception("Failed applying background task result on the UI thread.")
+            self.show_warning_message("Operation failed.", str(error))
+        finally:
+            self.loading_overlay.hide_loading()
+            QApplication.processEvents()
+
+    def handle_background_task_failure(
+        self,
+        error: Exception,
+    ) -> None:
+        """Handle a failed background task on the UI thread."""
+        self.loading_overlay.hide_loading()
+        QApplication.processEvents()
+
+        self._logger.log_error(f"Background task failed: {error}")
+
+        if self._background_task_failure_handler is not None:
+            self._background_task_failure_handler(error)
+            return
+
+        self.show_warning_message("Operation failed.", str(error))
+
+    def clear_background_task_references(self) -> None:
+        """Release references to the completed worker thread and worker object."""
+        self._task_thread = None
+        self._task_worker = None
+        self._background_task_success_handler = None
+        self._background_task_failure_handler = None
 
     def get_dropped_source_paths(
         self,
@@ -673,6 +845,7 @@ class MainWindow(QMainWindow):
     def resizeEvent(self, event: QResizeEvent) -> None:
         """Keep the selected-image preview scaled when the window is resized."""
         super().resizeEvent(event)
+        self.loading_overlay.resize(self.centralWidget().size())
         if not self._preview_image_path:
             return
 
@@ -697,3 +870,13 @@ class MainWindow(QMainWindow):
 
         self.set_source_paths(dropped_source_paths)
         event.acceptProposedAction()
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        """Prevent window close while a background task is still running."""
+        if self._task_thread is not None:
+            event.ignore()
+            self.show_warning_message("Wait for the current task to finish.")
+            return
+
+        self._logger.remove_message_listener(self.loading_overlay.message_logged.emit)
+        super().closeEvent(event)

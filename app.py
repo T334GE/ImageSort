@@ -11,6 +11,7 @@ from functions.get_app_logger import get_app_logger
 def main() -> None:
     """Run the Qt application."""
     logger = get_app_logger()
+    logger.install_qt_message_handler()
     logger.log_info("ImageSort app run started.")
 
     try:
@@ -21,6 +22,8 @@ def main() -> None:
     except Exception:
         logger.log_exception("Unhandled exception while running ImageSort.")
         raise
+    finally:
+        logger.restore_qt_message_handler()
 
     logger.log_info(f"ImageSort app run ended with exit code {exit_code}.")
     sys.exit(exit_code)

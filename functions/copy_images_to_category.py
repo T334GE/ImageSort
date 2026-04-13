@@ -11,7 +11,7 @@ from functions.get_available_file_path import get_available_file_path
 def copy_images_to_category(image_paths: Iterable[str], category_path: str) -> list[str]:
     """Copy image_paths into category_path and return final destination paths."""
     logger = get_app_logger()
-    category = Path(category_path)
+    category = Path(category_path).resolve()
     if not category.is_dir():
         logger.log_warning(f"Copy target category does not exist: {category}")
         raise NotADirectoryError(f"Category folder does not exist: {category}")
@@ -21,7 +21,7 @@ def copy_images_to_category(image_paths: Iterable[str], category_path: str) -> l
     copied_paths: list[str] = []
 
     for image_path in image_paths:
-        source_path = Path(image_path)
+        source_path = Path(image_path).resolve()
         if not source_path.is_file():
             logger.log_warning(f"Copy source file does not exist: {source_path}")
             raise FileNotFoundError(f"Image file does not exist: {source_path}")
@@ -29,7 +29,7 @@ def copy_images_to_category(image_paths: Iterable[str], category_path: str) -> l
         destination_path = get_available_file_path(category, source_path.name)
         try:
             final_path = Path(shutil.copy2(str(source_path), str(destination_path))).resolve()
-        except Exception:
+        except (OSError, shutil.Error):
             logger.log_exception(
                 f"Failed copying '{source_path}' to '{destination_path}'."
             )

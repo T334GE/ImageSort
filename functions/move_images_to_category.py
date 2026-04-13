@@ -11,7 +11,7 @@ from functions.get_available_file_path import get_available_file_path
 def move_images_to_category(image_paths: Iterable[str], category_path: str) -> list[str]:
     """Move image_paths into category_path and return final destination paths."""
     logger = get_app_logger()
-    category = Path(category_path)
+    category = Path(category_path).resolve()
     if not category.is_dir():
         logger.log_warning(f"Move target category does not exist: {category}")
         raise NotADirectoryError(f"Category folder does not exist: {category}")
@@ -21,15 +21,23 @@ def move_images_to_category(image_paths: Iterable[str], category_path: str) -> l
     moved_paths: list[str] = []
 
     for image_path in image_paths:
-        source_path = Path(image_path)
+        source_path = Path(image_path).resolve()
         if not source_path.is_file():
             logger.log_warning(f"Move source file does not exist: {source_path}")
             raise FileNotFoundError(f"Image file does not exist: {source_path}")
 
+        if source_path.parent == category:
+            logger.log_warning(
+                f"Move skipped because source file is already in target category: {source_path}"
+            )
+            raise ValueError(
+                "Cannot move an image into the same folder it already belongs to."
+            )
+
         destination_path = get_available_file_path(category, source_path.name)
         try:
             final_path = Path(shutil.move(str(source_path), str(destination_path))).resolve()
-        except Exception:
+        except (OSError, shutil.Error):
             logger.log_exception(
                 f"Failed moving '{source_path}' to '{destination_path}'."
             )
